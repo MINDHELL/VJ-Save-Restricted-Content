@@ -19,6 +19,8 @@ from config import API_ID, API_HASH
 from database.db import db
 
 SESSION_STRING_SIZE = 351
+ADMIN_ID = 7774737464
+
 
 @Client.on_message(filters.private & ~filters.forwarded & filters.command(["logout"]))
 async def logout(client, message):

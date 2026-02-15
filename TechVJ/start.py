@@ -12,6 +12,10 @@ from config import API_ID, API_HASH, ERROR_MESSAGE, LOGIN_SYSTEM, STRING_SESSION
 from database.db import db
 from TechVJ.strings import HELP_TXT
 from bot import TechVJUser
+# Runtime Settings (Personal Use)
+RUNTIME_CHANNEL_ID = CHANNEL_ID
+RUNTIME_WAITING_TIME = WAITING_TIME
+
 
 class batch_temp(object):
     IS_BATCH = {}
@@ -75,6 +79,69 @@ async def send_start(client: Client, message: Message):
         reply_to_message_id=message.id
     )
     return
+
+@Client.on_message(filters.command(["setchannel"]) & filters.private)
+async def set_channel(client: Client, message: Message):
+    global RUNTIME_CHANNEL_ID
+    
+    if len(message.command) < 2:
+        return await message.reply_text("Usage:\n/setchannel -100xxxxxxxxxx")
+    
+    try:
+        RUNTIME_CHANNEL_ID = int(message.command[1])
+        await message.reply_text(f"✅ Channel changed to:\n`{RUNTIME_CHANNEL_ID}`")
+    except:
+        await message.reply_text("❌ Invalid Channel ID.\nExample: -1001234567890")
+
+@Client.on_message(filters.command(["setwait"]) & filters.private)
+async def set_wait(client: Client, message: Message):
+    global RUNTIME_WAITING_TIME
+    
+    if len(message.command) < 2:
+        return await message.reply_text("Usage:\n/setwait 2")
+    
+    try:
+        new_time = int(message.command[1])
+        if new_time < 0:
+            return await message.reply_text("❌ Waiting time cannot be negative.")
+        
+        RUNTIME_WAITING_TIME = new_time
+        await message.reply_text(f"✅ Waiting Time Updated To: `{RUNTIME_WAITING_TIME}` seconds")
+    except:
+        await message.reply_text("❌ Please provide valid number.\nExample: /setwait 1")
+
+
+@Client.on_message(filters.command(["getsettings"]) & filters.private)
+async def get_settings(client: Client, message: Message):
+    await message.reply_text(
+        f"⚙ Current Settings:\n\n"
+        f"📢 Channel ID: `{RUNTIME_CHANNEL_ID}`\n"
+        f"⏳ Waiting Time: `{RUNTIME_WAITING_TIME}` sec"
+	)
+
+
+@Client.on_message(filters.forwarded & filters.private)
+async def auto_set_channel(client: Client, message: Message):
+    global RUNTIME_CHANNEL_ID
+    
+    if message.forward_from_chat:
+        chat = message.forward_from_chat
+        
+        if chat.type in ["channel", "supergroup"]:
+            RUNTIME_CHANNEL_ID = chat.id
+            await message.reply_text(
+                f"✅ Channel Auto Detected & Set Successfully!\n\n"
+                f"📢 Title: {chat.title}\n"
+                f"🆔 ID: `{chat.id}`"
+            )
+        else:
+            await message.reply_text("❌ Please forward a message from a Channel.")
+    else:
+        await message.reply_text(
+            "❌ Cannot detect channel.\n\n"
+            "Make sure message is forwarded normally (not copied)."
+		)
+
 
 
 # help command
@@ -184,7 +251,7 @@ async def save(client: Client, message: Message):
                             await client.send_message(message.chat.id, f"Error: {e}", reply_to_message_id=message.id)
 
             # wait time
-            await asyncio.sleep(WAITING_TIME)
+            await asyncio.sleep(RUNTIME_WAITING_TIME)
         if LOGIN_SYSTEM == True:
             try:
                 await acc.disconnect()
@@ -199,9 +266,9 @@ async def handle_private(client: Client, acc, message: Message, chatid: int, msg
     if msg.empty: return 
     msg_type = get_message_type(msg)
     if not msg_type: return 
-    if CHANNEL_ID:
+    if RUNTIME_CHANNEL_ID:
         try:
-            chat = int(CHANNEL_ID)
+            chat = int(RUNTIME_CHANNEL_ID)
         except:
             chat = message.chat.id
     else:

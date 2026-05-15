@@ -8,24 +8,56 @@ import asyncio
 import pyrogram
 
 from pyrogram import Client, filters, enums
-from pyrogram.errors import (FloodWait,UserAlreadyParticipant,InviteHashExpired,UsernameNotOccupied)
-from pyrogram.types import (InlineKeyboardMarkup,InlineKeyboardButton,Message)
-from config import (API_ID,API_HASH,ERROR_MESSAGE,LOGIN_SYSTEM,STRING_SESSION,CHANNEL_ID,WAITING_TIME)
+
+from pyrogram.errors import (
+    FloodWait,
+    UserAlreadyParticipant,
+    InviteHashExpired,
+    UsernameNotOccupied,
+    SessionRevoked,
+    AuthKeyUnregistered
+)
+
+from pyrogram.types import (
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    Message
+)
+
+from config import (
+    API_ID,
+    API_HASH,
+    ERROR_MESSAGE,
+    LOGIN_SYSTEM,
+    STRING_SESSION,
+    CHANNEL_ID,
+    WAITING_TIME
+)
+
 from database.db import db
 from TechVJ.strings import HELP_TXT
 from bot import TechVJUser
 
 
-# Runtime Settings
+# =========================
+# RUNTIME SETTINGS
+# =========================
+
 RUNTIME_CHANNEL_ID = CHANNEL_ID
 RUNTIME_WAITING_TIME = WAITING_TIME
 
-# Cached User Clients
-USER_CLIENTS = {}
 
-# Progress Cache
+# =========================
+# CACHE
+# =========================
+
+USER_CLIENTS = {}
 PROGRESS_CACHE = {}
 
+
+# =========================
+# BATCH SYSTEM
+# =========================
 
 class batch_temp(object):
     IS_BATCH = {}
@@ -37,14 +69,30 @@ class batch_temp(object):
 
 async def get_user_client(user_id, session_string, api_id, api_hash):
 
+    # Reuse Existing Client
     if user_id in USER_CLIENTS:
-        return USER_CLIENTS[user_id]
 
+        old_client = USER_CLIENTS[user_id]
+
+        try:
+            await old_client.get_me()
+            return old_client
+
+        except:
+            try:
+                await old_client.disconnect()
+            except:
+                pass
+
+            USER_CLIENTS.pop(user_id, None)
+
+    # Create Fresh Client
     client = Client(
-        f"user_{user_id}",
+        name=f"user_{user_id}_{int(time.time())}",
         session_string=session_string,
         api_id=api_id,
-        api_hash=api_hash
+        api_hash=api_hash,
+        no_updates=True
     )
 
     await client.connect()
@@ -65,6 +113,7 @@ async def progress_bar(current, total, message, start, text_type):
     if message.id not in PROGRESS_CACHE:
         PROGRESS_CACHE[message.id] = 0
 
+    # Update Every 2 Seconds
     if now - PROGRESS_CACHE[message.id] < 2:
         return
 
@@ -76,32 +125,21 @@ async def progress_bar(current, total, message, start, text_type):
 
     elapsed_time = now - start
 
-    time_to_completion = (
+    eta = (
         (total - current) / speed
         if speed > 0 else 0
     )
 
-    estimated_total_time = elapsed_time + time_to_completion
-
-    elapsed_time = time.strftime(
+    eta_time = time.strftime(
         "%H:%M:%S",
-        time.gmtime(elapsed_time)
-    )
-
-    estimated_total_time = time.strftime(
-        "%H:%M:%S",
-        time.gmtime(estimated_total_time)
+        time.gmtime(eta)
     )
 
     bar_length = 20
 
-    filled_bar_length = int(
-        bar_length * current / total
-    )
+    filled = int(bar_length * current / total)
 
-    bar = "█" * filled_bar_length + "░" * (
-        bar_length - filled_bar_length
-    )
+    bar = "█" * filled + "░" * (bar_length - filled)
 
     try:
         await message.edit_text(
@@ -111,7 +149,7 @@ async def progress_bar(current, total, message, start, text_type):
             f"💾 **Done:** `{current / 1024 / 1024:.2f} MB`\n"
             f"📦 **Total:** `{total / 1024 / 1024:.2f} MB`\n"
             f"🚀 **Speed:** `{speed / 1024 / 1024:.2f} MB/s`\n"
-            f"⏳ **ETA:** `{estimated_total_time}`"
+            f"⏳ **ETA:** `{eta_time}`"
         )
 
     except:
@@ -126,6 +164,7 @@ async def progress_bar(current, total, message, start, text_type):
 async def send_start(client: Client, message: Message):
 
     if not await db.is_user_exist(message.from_user.id):
+
         await db.add_user(
             message.from_user.id,
             message.from_user.first_name
@@ -138,12 +177,12 @@ async def send_start(client: Client, message: Message):
         )
     ], [
         InlineKeyboardButton(
-            '🔍 sᴜᴘᴘᴏʀᴛ ɢʀᴏᴜᴘ',
-            url='https://t.me/vj_bot_disscussion'
+            "🔍 Support Group",
+            url="https://t.me/vj_bot_disscussion"
         ),
         InlineKeyboardButton(
-            '🤖 ᴜᴘᴅᴀᴛᴇ ᴄʜᴀɴɴᴇʟ',
-            url='https://t.me/vj_bots'
+            "🤖 Update Channel",
+            url="https://t.me/vj_bots"
         )
     ]]
 
@@ -152,13 +191,40 @@ async def send_start(client: Client, message: Message):
     await client.send_message(
         chat_id=message.chat.id,
         text=(
-            f"<b>👋 Hi {message.from_user.mention}, "
+            f"<b>👋 Hi {message.from_user.mention},\n\n"
             f"I am Save Restricted Content Bot.\n\n"
-            f"For downloading restricted content /login first.\n\n"
-            f"Know how to use bot by - /help</b>"
+            f"Send any Telegram post link.\n\n"
+            f"Use /help for more info.</b>"
         ),
         reply_markup=reply_markup,
         reply_to_message_id=message.id
+    )
+
+
+# =========================
+# HELP
+# =========================
+
+@Client.on_message(filters.command(["help"]))
+async def send_help(client: Client, message: Message):
+
+    await client.send_message(
+        chat_id=message.chat.id,
+        text=HELP_TXT
+    )
+
+
+# =========================
+# CANCEL
+# =========================
+
+@Client.on_message(filters.command(["cancel"]))
+async def send_cancel(client: Client, message: Message):
+
+    batch_temp.IS_BATCH[message.from_user.id] = False
+
+    await message.reply_text(
+        "**✅ Batch Cancelled Successfully.**"
     )
 
 
@@ -177,17 +243,15 @@ async def set_channel(client: Client, message: Message):
         )
 
     try:
+
         RUNTIME_CHANNEL_ID = int(message.command[1])
 
         await message.reply_text(
-            f"✅ Channel changed to:\n"
-            f"`{RUNTIME_CHANNEL_ID}`"
+            f"✅ Channel changed to:\n`{RUNTIME_CHANNEL_ID}`"
         )
 
     except:
-        await message.reply_text(
-            "❌ Invalid Channel ID."
-        )
+        await message.reply_text("❌ Invalid Channel ID.")
 
 
 @Client.on_message(filters.command(["setwait"]) & filters.private)
@@ -201,6 +265,7 @@ async def set_wait(client: Client, message: Message):
         )
 
     try:
+
         new_time = int(message.command[1])
 
         if new_time < 0:
@@ -211,8 +276,8 @@ async def set_wait(client: Client, message: Message):
         RUNTIME_WAITING_TIME = new_time
 
         await message.reply_text(
-            f"✅ Waiting Time Updated To:"
-            f" `{RUNTIME_WAITING_TIME}` sec"
+            f"✅ Waiting Time Updated To: "
+            f"`{RUNTIME_WAITING_TIME}` sec"
         )
 
     except:
@@ -266,89 +331,63 @@ async def auto_set_channel(client: Client, message: Message):
 
 
 # =========================
-# HELP
-# =========================
-
-@Client.on_message(filters.command(["help"]))
-async def send_help(client: Client, message: Message):
-
-    await client.send_message(
-        chat_id=message.chat.id,
-        text=f"{HELP_TXT}"
-    )
-
-
-# =========================
-# CANCEL
-# =========================
-
-@Client.on_message(filters.command(["cancel"]))
-async def send_cancel(client: Client, message: Message):
-
-    batch_temp.IS_BATCH[message.from_user.id] = False
-
-    await client.send_message(
-        chat_id=message.chat.id,
-        text="**Batch Cancelled Successfully.**"
-    )
-
-
-# =========================
-# MAIN SAVE
+# MAIN SAVE FUNCTION
 # =========================
 
 @Client.on_message(filters.text & filters.private)
 async def save(client: Client, message: Message):
 
+    # Ignore Commands
+    if message.text.startswith("/"):
+        return
+
     # Join Chat
     if (
         "https://t.me/+" in message.text
         or "https://t.me/joinchat/" in message.text
-    ) and LOGIN_SYSTEM == False:
+    ):
 
         if TechVJUser is None:
-            return await client.send_message(
-                message.chat.id,
-                "String Session is not Set"
+            return await message.reply_text(
+                "❌ String Session is not Set."
             )
 
         try:
+
             await TechVJUser.join_chat(message.text)
 
-            await client.send_message(
-                message.chat.id,
-                "Chat Joined"
+            return await message.reply_text(
+                "✅ Chat Joined Successfully."
             )
 
         except UserAlreadyParticipant:
-            await client.send_message(
-                message.chat.id,
-                "Chat already Joined"
+            return await message.reply_text(
+                "✅ Chat already joined."
             )
 
         except InviteHashExpired:
-            await client.send_message(
-                message.chat.id,
-                "Invalid Link"
+            return await message.reply_text(
+                "❌ Invalid Invite Link."
             )
 
         except Exception as e:
-            await client.send_message(
-                message.chat.id,
-                f"Error: {e}"
+            return await message.reply_text(
+                f"❌ Error:\n`{e}`"
             )
 
+    # Only Telegram Links
+    if not message.text.startswith("https://t.me/"):
         return
 
-    # Telegram Link
-    if message.text.startswith("https://t.me/"):
+    # Prevent Multiple Tasks
+    if batch_temp.IS_BATCH.get(message.from_user.id):
+        return await message.reply_text(
+            "**⚠️ One Task Already Running.**"
+        )
 
-        if batch_temp.IS_BATCH.get(message.from_user.id):
-            return await message.reply_text(
-                "**One Task Already Running.**"
-            )
+    batch_temp.IS_BATCH[message.from_user.id] = True
 
-        batch_temp.IS_BATCH[message.from_user.id] = True
+    try:
 
         datas = message.text.split("/")
 
@@ -364,18 +403,22 @@ async def save(client: Client, message: Message):
         except:
             toID = fromID
 
+        # =========================
         # LOGIN SYSTEM
-        if LOGIN_SYSTEM == True:
+        # =========================
+
+        if LOGIN_SYSTEM:
 
             user_data = await db.get_session(
                 message.from_user.id
             )
 
-            if user_data is None:
+            if not user_data:
+
                 batch_temp.IS_BATCH[message.from_user.id] = False
 
-                return await message.reply(
-                    "**Please /login First.**"
+                return await message.reply_text(
+                    "**❌ Please /login First.**"
                 )
 
             api_id = int(
@@ -387,6 +430,7 @@ async def save(client: Client, message: Message):
             )
 
             try:
+
                 acc = await get_user_client(
                     message.from_user.id,
                     user_data,
@@ -394,27 +438,34 @@ async def save(client: Client, message: Message):
                     api_hash
                 )
 
-            except Exception:
+            except (
+                SessionRevoked,
+                AuthKeyUnregistered,
+                Exception
+            ) as e:
+
                 batch_temp.IS_BATCH[message.from_user.id] = False
 
-                return await message.reply(
-                    "**Session Expired. "
-                    "Please /logout and /login again.**"
+                return await message.reply_text(
+                    f"❌ Login Failed:\n`{e}`"
                 )
 
         else:
 
             if TechVJUser is None:
+
                 batch_temp.IS_BATCH[message.from_user.id] = False
 
-                return await client.send_message(
-                    message.chat.id,
-                    "**String Session is not Set**"
+                return await message.reply_text(
+                    "**❌ STRING_SESSION not set.**"
                 )
 
             acc = TechVJUser
 
-        # LOOP
+        # =========================
+        # PROCESS LOOP
+        # =========================
+
         for msgid in range(fromID, toID + 1):
 
             if not batch_temp.IS_BATCH.get(message.from_user.id):
@@ -422,7 +473,7 @@ async def save(client: Client, message: Message):
 
             try:
 
-                # PRIVATE
+                # PRIVATE LINK
                 if "https://t.me/c/" in message.text:
 
                     chatid = int("-100" + datas[4])
@@ -435,7 +486,7 @@ async def save(client: Client, message: Message):
                         msgid
                     )
 
-                # BOT
+                # BOT LINK
                 elif "https://t.me/b/" in message.text:
 
                     username = datas[4]
@@ -448,29 +499,38 @@ async def save(client: Client, message: Message):
                         msgid
                     )
 
-                # PUBLIC
+                # PUBLIC LINK
                 else:
 
                     username = datas[3]
 
                     try:
+
                         msg = await client.get_messages(
                             username,
                             msgid
                         )
 
                     except UsernameNotOccupied:
-                        return await client.send_message(
-                            message.chat.id,
-                            "Username not occupied."
+
+                        await message.reply_text(
+                            "❌ Username not occupied."
                         )
 
+                        break
+
                     try:
+
+                        chat = (
+                            int(RUNTIME_CHANNEL_ID)
+                            if RUNTIME_CHANNEL_ID
+                            else message.chat.id
+                        )
+
                         await client.copy_message(
-                            message.chat.id,
-                            msg.chat.id,
-                            msg.id,
-                            reply_to_message_id=message.id
+                            chat_id=chat,
+                            from_chat_id=msg.chat.id,
+                            message_id=msg.id
                         )
 
                     except:
@@ -484,17 +544,21 @@ async def save(client: Client, message: Message):
                         )
 
             except FloodWait as fw:
+
                 await asyncio.sleep(fw.value)
 
             except Exception as e:
 
-                if ERROR_MESSAGE == True:
+                if ERROR_MESSAGE:
+
                     await client.send_message(
                         message.chat.id,
-                        f"Error: {e}"
+                        f"❌ Error:\n`{e}`"
                     )
 
             await asyncio.sleep(RUNTIME_WAITING_TIME)
+
+    finally:
 
         batch_temp.IS_BATCH[message.from_user.id] = False
 
@@ -524,24 +588,17 @@ async def handle_private(
     if not msg_type:
         return
 
-    if RUNTIME_CHANNEL_ID:
-
-        try:
-            chat = int(RUNTIME_CHANNEL_ID)
-
-        except:
-            chat = message.chat.id
-
-    else:
-        chat = message.chat.id
-
-    if not batch_temp.IS_BATCH.get(message.from_user.id):
-        return
+    chat = (
+        int(RUNTIME_CHANNEL_ID)
+        if RUNTIME_CHANNEL_ID
+        else message.chat.id
+    )
 
     # TEXT
     if msg_type == "Text":
 
         try:
+
             await client.send_message(
                 chat,
                 msg.text,
@@ -552,17 +609,17 @@ async def handle_private(
         except Exception as e:
 
             if ERROR_MESSAGE:
-                await client.send_message(
-                    message.chat.id,
-                    f"Error: {e}"
+
+                await message.reply_text(
+                    f"❌ Error:\n`{e}`"
                 )
 
         return
 
-    # DOWNLOAD STATUS MESSAGE
+    # STATUS MESSAGE
     smsg = await client.send_message(
         message.chat.id,
-        "**Downloading Started...**"
+        "**📥 Downloading Started...**"
     )
 
     start_time = time.time()
@@ -582,38 +639,28 @@ async def handle_private(
 
     except Exception as e:
 
+        await smsg.delete()
+
         if ERROR_MESSAGE:
-            await client.send_message(
-                message.chat.id,
-                f"Error: {e}"
+
+            await message.reply_text(
+                f"❌ Download Error:\n`{e}`"
             )
 
-        return await smsg.delete()
-
-    if not batch_temp.IS_BATCH.get(message.from_user.id):
         return
 
     caption = msg.caption if msg.caption else None
 
     upload_start = time.time()
 
-    # DOCUMENT
-    if msg_type == "Document":
+    try:
 
-        try:
-            ph_path = await acc.download_media(
-                msg.document.thumbs[0].file_id
-            )
-
-        except:
-            ph_path = None
-
-        try:
+        # DOCUMENT
+        if msg_type == "Document":
 
             await client.send_document(
                 chat,
                 file,
-                thumb=ph_path,
                 caption=caption,
                 parse_mode=enums.ParseMode.HTML,
                 progress=progress_bar,
@@ -624,29 +671,8 @@ async def handle_private(
                 )
             )
 
-        except Exception as e:
-
-            if ERROR_MESSAGE:
-                await client.send_message(
-                    message.chat.id,
-                    f"Error: {e}"
-                )
-
-        if ph_path and os.path.exists(ph_path):
-            os.remove(ph_path)
-
-    # VIDEO
-    elif msg_type == "Video":
-
-        try:
-            ph_path = await acc.download_media(
-                msg.video.thumbs[0].file_id
-            )
-
-        except:
-            ph_path = None
-
-        try:
+        # VIDEO
+        elif msg_type == "Video":
 
             await client.send_video(
                 chat,
@@ -654,7 +680,6 @@ async def handle_private(
                 duration=msg.video.duration,
                 width=msg.video.width,
                 height=msg.video.height,
-                thumb=ph_path,
                 caption=caption,
                 parse_mode=enums.ParseMode.HTML,
                 progress=progress_bar,
@@ -665,54 +690,21 @@ async def handle_private(
                 )
             )
 
-        except Exception as e:
-
-            if ERROR_MESSAGE:
-                await client.send_message(
-                    message.chat.id,
-                    f"Error: {e}"
-                )
-
-        if ph_path and os.path.exists(ph_path):
-            os.remove(ph_path)
-
-    # PHOTO
-    elif msg_type == "Photo":
-
-        try:
+        # PHOTO
+        elif msg_type == "Photo":
 
             await client.send_photo(
                 chat,
                 file,
-                caption=caption,
-                parse_mode=enums.ParseMode.HTML
+                caption=caption
             )
 
-        except Exception as e:
-
-            if ERROR_MESSAGE:
-                await client.send_message(
-                    message.chat.id,
-                    f"Error: {e}"
-                )
-
-    # AUDIO
-    elif msg_type == "Audio":
-
-        try:
-            ph_path = await acc.download_media(
-                msg.audio.thumbs[0].file_id
-            )
-
-        except:
-            ph_path = None
-
-        try:
+        # AUDIO
+        elif msg_type == "Audio":
 
             await client.send_audio(
                 chat,
                 file,
-                thumb=ph_path,
                 caption=caption,
                 parse_mode=enums.ParseMode.HTML,
                 progress=progress_bar,
@@ -723,27 +715,13 @@ async def handle_private(
                 )
             )
 
-        except Exception as e:
-
-            if ERROR_MESSAGE:
-                await client.send_message(
-                    message.chat.id,
-                    f"Error: {e}"
-                )
-
-        if ph_path and os.path.exists(ph_path):
-            os.remove(ph_path)
-
-    # VOICE
-    elif msg_type == "Voice":
-
-        try:
+        # VOICE
+        elif msg_type == "Voice":
 
             await client.send_voice(
                 chat,
                 file,
                 caption=caption,
-                parse_mode=enums.ParseMode.HTML,
                 progress=progress_bar,
                 progress_args=(
                     smsg,
@@ -752,54 +730,39 @@ async def handle_private(
                 )
             )
 
-        except Exception as e:
+        # STICKER
+        elif msg_type == "Sticker":
 
-            if ERROR_MESSAGE:
-                await client.send_message(
-                    message.chat.id,
-                    f"Error: {e}"
-                )
+            await client.send_sticker(
+                chat,
+                file
+            )
 
-    # STICKER
-    elif msg_type == "Sticker":
+        # ANIMATION
+        elif msg_type == "Animation":
 
-        try:
-            await client.send_sticker(chat, file)
+            await client.send_animation(
+                chat,
+                file
+            )
 
-        except Exception as e:
+    except Exception as e:
 
-            if ERROR_MESSAGE:
-                await client.send_message(
-                    message.chat.id,
-                    f"Error: {e}"
-                )
+        if ERROR_MESSAGE:
 
-    # ANIMATION
-    elif msg_type == "Animation":
-
-        try:
-            await client.send_animation(chat, file)
-
-        except Exception as e:
-
-            if ERROR_MESSAGE:
-                await client.send_message(
-                    message.chat.id,
-                    f"Error: {e}"
-                )
+            await message.reply_text(
+                f"❌ Upload Error:\n`{e}`"
+            )
 
     # CLEANUP
     try:
-
         if os.path.exists(file):
             os.remove(file)
-
     except:
         pass
 
     try:
         await smsg.delete()
-
     except:
         pass
 
@@ -861,6 +824,3 @@ def get_message_type(
         pass
 
 
-# Don't Remove Credit @VJ_Bots
-# Subscribe YouTube Channel For Amazing Bot @Tech_VJ
-# Ask Doubt on telegram @KingVJ01
